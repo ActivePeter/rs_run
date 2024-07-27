@@ -16,6 +16,7 @@ pub mod error;
 mod future_wrapper;
 pub mod global;
 mod metrics;
+mod priority;
 mod repeated_task;
 pub mod runtime;
 
