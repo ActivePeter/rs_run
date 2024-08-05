@@ -13,9 +13,9 @@
 // limitations under the License.
 
 pub mod error;
-mod future_wrapper;
 pub mod global;
 mod metrics;
+mod pending_future;
 mod priority;
 mod repeated_task;
 pub mod runtime;
