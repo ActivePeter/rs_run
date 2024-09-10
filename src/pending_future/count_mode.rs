@@ -1,8 +1,7 @@
 use crate::priority::Priority;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::{
-    future::Future
-    ,
+    future::Future,
     sync::Arc,
     task::{Context, Poll},
 };
@@ -65,12 +64,11 @@ where
         let pend_period = self.priority.fixed_interval_count();
 
         let pendcnt = self.pend_cnt.clone();
-        let inserted_pendcnt =
-            self.inserted_pend_cnt.clone();
+        let inserted_pendcnt = self.inserted_pend_cnt.clone();
 
+        let cur_pend_cnt = pendcnt.load(Ordering::Acquire);
         if let Some(pend_period) = pend_period {
-            let cur_pend_cnt = pendcnt.load(Ordering::Acquire);
-            if (cur_pend_cnt) % pend_period == 0 {
+            if (cur_pend_cnt + 1) % pend_period == 0 {
                 // println!("pending");
                 pendcnt.fetch_add(1, Ordering::Release);
                 inserted_pendcnt.fetch_add(1, Ordering::Release);
@@ -141,8 +139,8 @@ mod tests {
         tokio::spawn(async move {
             let _ = future.await;
         })
-            .await
-            .unwrap();
+        .await
+        .unwrap();
         assert_eq!(0, pend_cnt.load(Ordering::Acquire));
     }
 

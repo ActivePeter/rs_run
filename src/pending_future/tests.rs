@@ -1,10 +1,10 @@
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::{
     collections::{BTreeMap, HashMap},
     future::Future,
     sync::{atomic::AtomicBool, Arc, Mutex},
     thread,
 };
-use std::sync::atomic::{AtomicU32, Ordering};
 use sysinfo::{Pid, ProcessRefreshKind, RefreshKind};
 
 use crate::priority::{self, Priority};
@@ -175,9 +175,9 @@ macro_rules! def_workloads {
 #[macro_export]
 macro_rules! test_effect {
     ($mode: ident) => {
-        use std::sync::Mutex;
-        use std::sync::Arc;
         use std::sync::atomic::AtomicU32;
+        use std::sync::Arc;
+        use std::sync::Mutex;
         crate::def_workloads!();
 
         type WorkLoadId = u64;
@@ -302,7 +302,8 @@ macro_rules! test_effect {
                 for (time, pend_cnt) in time_collect.iter() {
                     sum += time;
                     count += 1;
-                    sum_pendcnt_per_ms += pend_cnt.load(std::sync::atomic::Ordering::Acquire) as f64 / *time as f64;
+                    sum_pendcnt_per_ms +=
+                        pend_cnt.load(std::sync::atomic::Ordering::Acquire) as f64 / *time as f64;
                 }
                 each_workload_pendcnt_per_ms[i as usize] =
                     sum_pendcnt_per_ms / time_collect.len() as f64;

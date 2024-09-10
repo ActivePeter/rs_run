@@ -1,12 +1,10 @@
-use std::{
-    cell::RefCell,
-    future::Future,
-    ptr::NonNull,
-    sync::{atomic::AtomicUsize, Arc, Mutex},
-    task::{Context, Poll, Waker},
-};
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use crate::priority::Priority;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::{
+    future::Future,
+    sync::Arc,
+    task::{Context, Poll},
+};
 
 pub fn new_pending_future<F>(priority: Priority, future: F) -> TimeModePendingFuture<F>
 where
@@ -51,11 +49,9 @@ where
     fn poll(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let pend_period = self.priority.fixed_interval_time_ms();
 
-        let mut pendcnt = self.pend_cnt.clone();
-        let mut inserted_pendcnt =
-            self.inserted_pend_cnt.clone();
-        let mut adding_up_time =
-            self.adding_up_time.clone();
+        let pendcnt = self.pend_cnt.clone();
+        let inserted_pendcnt = self.inserted_pend_cnt.clone();
+        let adding_up_time = self.adding_up_time.clone();
 
         // println!("adding_up_time: {}", self.adding_up_time);
 
@@ -89,14 +85,9 @@ where
 
 #[cfg(test)]
 mod tests {
-
     use crate::priority::Priority;
     use crate::test_effect;
-    use crate::test_pend_cnt;
-    use std::{
-        collections::HashMap,
-        sync::{Arc, Mutex},
-    };
+    use std::sync::{Arc, Mutex};
 
     // #[tokio::test]
     // async fn test_pend_cnt() {
