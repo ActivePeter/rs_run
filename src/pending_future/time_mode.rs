@@ -5,7 +5,7 @@ use std::{
     sync::{atomic::AtomicUsize, Arc, Mutex},
     task::{Context, Poll, Waker},
 };
-
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use crate::priority::Priority;
 
 pub fn new_pending_future<F>(priority: Priority, future: F) -> TimeModePendingFuture<F>
@@ -21,9 +21,9 @@ pub struct TimeModePendingFuture<F: Future + Send + 'static> {
     /// priority of this future
     priority: Priority,
     /// count of inner future pending
-    pub pend_cnt: Arc<u32>, // track the pending count for test
-    pub inserted_pend_cnt: Arc<u32>,
-    adding_up_time: Arc<u64>,
+    pub pend_cnt: Arc<AtomicU32>, // track the pending count for test
+    pub inserted_pend_cnt: Arc<AtomicU32>,
+    adding_up_time: Arc<AtomicU64>,
 }
 
 impl<F> TimeModePendingFuture<F>
@@ -33,10 +33,10 @@ where
     fn new(priority: Priority, future: F) -> Self {
         Self {
             future,
-            pend_cnt: Arc::new(0),
+            pend_cnt: Default::default(),
             priority,
-            adding_up_time: Arc::new(0),
-            inserted_pend_cnt: Arc::new(0),
+            adding_up_time: Default::default(),
+            inserted_pend_cnt: Default::default(),
         }
     }
 }
@@ -51,25 +51,22 @@ where
     fn poll(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let pend_period = self.priority.fixed_interval_time_ms();
 
-        let mut pendcnt = NonNull::new(&*self.pend_cnt as *const _ as *mut u32).unwrap();
+        let mut pendcnt = self.pend_cnt.clone();
         let mut inserted_pendcnt =
-            NonNull::new(&*self.inserted_pend_cnt as *const _ as *mut u32).unwrap();
+            self.inserted_pend_cnt.clone();
         let mut adding_up_time =
-            NonNull::new(&*self.adding_up_time as *const _ as *mut u64).unwrap();
+            self.adding_up_time.clone();
 
         // println!("adding_up_time: {}", self.adding_up_time);
 
         if let Some(pend_period) = pend_period {
-            unsafe {
-                if *adding_up_time.as_ref() > pend_period {
-                    *adding_up_time.as_mut() -= pend_period;
-                    *inserted_pendcnt.as_mut() += 1;
-                    // Register the current task to be woken when the pending period is reached.
-                    let waker = cx.waker().clone();
-                    waker.wake();
-
-                    return Poll::Pending;
-                }
+            if adding_up_time.load(Ordering::Acquire) > pend_period {
+                adding_up_time.fetch_sub(pend_period, Ordering::Release);
+                inserted_pendcnt.fetch_add(1, Ordering::Release);
+                // Register the current task to be woken when the pending period is reached.
+                let waker = cx.waker().clone();
+                waker.wake();
+                return Poll::Pending;
             }
         }
 
@@ -82,10 +79,8 @@ where
                 let elapsed = begin.elapsed().as_micros();
 
                 // println!("elapsed: {}", elapsed);
-                unsafe {
-                    *adding_up_time.as_mut() += elapsed as u64;
-                    *pendcnt.as_mut() += 1;
-                }
+                adding_up_time.fetch_add(elapsed as u64, Ordering::Release);
+                pendcnt.fetch_add(1, Ordering::Release);
                 Poll::Pending
             }
         }

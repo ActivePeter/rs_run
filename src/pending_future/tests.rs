@@ -4,7 +4,7 @@ use std::{
     sync::{atomic::AtomicBool, Arc, Mutex},
     thread,
 };
-
+use std::sync::atomic::{AtomicU32, Ordering};
 use sysinfo::{Pid, ProcessRefreshKind, RefreshKind};
 
 use crate::priority::{self, Priority};
@@ -20,6 +20,7 @@ use crate::priority::{self, Priority};
 #[macro_export]
 macro_rules! test_pend_cnt_with_priority {
     ($mode: ident,$priority: ident) => {
+        use std::sync::atomic::Ordering;
         let period = $priority.fixed_interval_count();
 
         // no trigger pend case
@@ -31,7 +32,7 @@ macro_rules! test_pend_cnt_with_priority {
             });
             let pend_cnt = f.pend_cnt.clone();
             f.await;
-            (pend_cnt, period - 2)
+            (pend_cnt.load(Ordering::Acquire), period - 2)
         } else {
             let f = crate::pending_future::$mode::new_pending_future($priority, async {
                 for _ in 0..100 {
@@ -40,13 +41,13 @@ macro_rules! test_pend_cnt_with_priority {
             });
             let pend_cnt = f.pend_cnt.clone();
             f.await;
-            (pend_cnt, 100)
+            (pend_cnt.load(Ordering::Acquire), 100)
         };
 
         assert!(
-            *pend_cnt == should_pend,
+            pend_cnt == should_pend,
             "{} {} {:?}",
-            *pend_cnt,
+            pend_cnt,
             should_pend,
             $priority
         );
@@ -71,7 +72,7 @@ macro_rules! test_pend_cnt_with_priority {
         let future = crate::pending_future::$mode::new_pending_future($priority, inner_future);
         let pend_cnt = future.pend_cnt.clone();
         future.await;
-        assert!(*pend_cnt == should_pend);
+        assert!(pend_cnt.load(std::sync::atomic::Ordering::Acquire) == should_pend);
     };
 }
 
@@ -174,6 +175,9 @@ macro_rules! def_workloads {
 #[macro_export]
 macro_rules! test_effect {
     ($mode: ident) => {
+        use std::sync::Mutex;
+        use std::sync::Arc;
+        use std::sync::atomic::AtomicU32;
         crate::def_workloads!();
 
         type WorkLoadId = u64;
@@ -183,10 +187,10 @@ macro_rules! test_effect {
         let mut tasks = vec![];
 
         // (Priority, WorkLoadId) -> Vec<(Time, InsertedPendCount)>
-        let mut each_task_time_collect: HashMap<
+        let mut each_task_time_collect: std::collections::HashMap<
             (Priority, WorkLoadId),
-            Mutex<Vec<(usize, Arc<u32>)>>,
-        > = HashMap::new();
+            Mutex<Vec<(usize, Arc<AtomicU32>)>>,
+        > = std::collections::HashMap::new();
         for priority in &[
             Priority::VeryLow,
             Priority::Low,
@@ -298,7 +302,7 @@ macro_rules! test_effect {
                 for (time, pend_cnt) in time_collect.iter() {
                     sum += time;
                     count += 1;
-                    sum_pendcnt_per_ms += **pend_cnt as f64 / *time as f64;
+                    sum_pendcnt_per_ms += pend_cnt.load(std::sync::atomic::Ordering::Acquire) as f64 / *time as f64;
                 }
                 each_workload_pendcnt_per_ms[i as usize] =
                     sum_pendcnt_per_ms / time_collect.len() as f64;
