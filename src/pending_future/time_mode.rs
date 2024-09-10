@@ -14,7 +14,9 @@ where
     TimeModePendingFuture::new(priority, future)
 }
 
+#[pin_project::pin_project]
 pub struct TimeModePendingFuture<F: Future + Send + 'static> {
+    #[pin]
     future: F,
     /// priority of this future
     priority: Priority,
@@ -47,11 +49,12 @@ where
     type Output = F::Output;
 
     fn poll(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let pend_period = self.priority.fixed_interval_time_ms();
+        let this = self.project();
+        let pend_period = this.priority.fixed_interval_time_ms();
 
-        let pendcnt = self.pend_cnt.clone();
-        let inserted_pendcnt = self.inserted_pend_cnt.clone();
-        let adding_up_time = self.adding_up_time.clone();
+        let pendcnt = this.pend_cnt.clone();
+        let inserted_pendcnt = this.inserted_pend_cnt.clone();
+        let adding_up_time = this.adding_up_time.clone();
 
         // println!("adding_up_time: {}", self.adding_up_time);
 
@@ -66,10 +69,8 @@ where
             }
         }
 
-        let inner_future = unsafe { self.map_unchecked_mut(|v| &mut v.future) };
-
         let begin = std::time::Instant::now();
-        match inner_future.poll(cx) {
+        match this.future.poll(cx) {
             Poll::Ready(r) => Poll::Ready(r),
             Poll::Pending => {
                 let elapsed = begin.elapsed().as_micros();

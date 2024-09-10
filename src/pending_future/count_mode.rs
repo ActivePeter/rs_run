@@ -14,7 +14,9 @@ where
     PendingFuture::new(priority, future)
 }
 
+#[pin_project::pin_project]
 pub struct PendingFuture<F: Future + Send + 'static> {
+    #[pin]
     future: F,
     /// priority of this future
     priority: Priority,
@@ -61,10 +63,11 @@ where
     type Output = F::Output;
 
     fn poll(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let pend_period = self.priority.fixed_interval_count();
+        let this = self.project();
+        let pend_period = this.priority.fixed_interval_count();
 
-        let pendcnt = self.pend_cnt.clone();
-        let inserted_pendcnt = self.inserted_pend_cnt.clone();
+        let pendcnt = this.pend_cnt.clone();
+        let inserted_pendcnt = this.inserted_pend_cnt.clone();
 
         let cur_pend_cnt = pendcnt.load(Ordering::Acquire);
         if let Some(pend_period) = pend_period {
@@ -79,9 +82,7 @@ where
             }
         }
 
-        let inner_future = unsafe { self.map_unchecked_mut(|v| &mut v.future) };
-
-        match inner_future.poll(cx) {
+        match this.future.poll(cx) {
             Poll::Ready(r) => Poll::Ready(r),
             Poll::Pending => {
                 // println!("pending");
