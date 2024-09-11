@@ -1,12 +1,10 @@
+use crate::priority::Priority;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::{
-    cell::RefCell,
     future::Future,
-    ptr::NonNull,
-    sync::{atomic::AtomicUsize, Arc, Mutex},
-    task::{Context, Poll, Waker},
+    sync::Arc,
+    task::{Context, Poll},
 };
-
-use crate::priority::{self, Priority};
 
 pub fn new_pending_future<F>(priority: Priority, future: F) -> PendingFuture<F>
 where
@@ -16,14 +14,16 @@ where
     PendingFuture::new(priority, future)
 }
 
+#[pin_project::pin_project]
 pub struct PendingFuture<F: Future + Send + 'static> {
+    #[pin]
     future: F,
     /// priority of this future
     priority: Priority,
-    /// count of pend
-    pub pend_cnt: Arc<u32>, // track the pending count for test
-    /// count of inserted pend
-    pub inserted_pend_cnt: Arc<u32>,
+    /// count of pendings
+    pub pend_cnt: Arc<AtomicU32>, // track the pending count for test
+    /// count of inserted pendings
+    pub inserted_pend_cnt: Arc<AtomicU32>,
 }
 
 impl<F> PendingFuture<F>
@@ -34,9 +34,9 @@ where
     pub fn new(priority: Priority, future: F) -> Self {
         Self {
             future,
-            pend_cnt: Arc::new(0),
             priority,
-            inserted_pend_cnt: Arc::new(0),
+            pend_cnt: Arc::new(AtomicU32::new(0)),
+            inserted_pend_cnt: Arc::new(AtomicU32::new(0)),
         }
     }
 }
@@ -63,37 +63,30 @@ where
     type Output = F::Output;
 
     fn poll(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let pend_period = self.priority.fixed_interval_count();
+        let this = self.project();
+        let pend_period = this.priority.fixed_interval_count();
 
-        let mut pendcnt = NonNull::new(&*self.pend_cnt as *const _ as *mut u32).unwrap();
-        let mut inserted_pendcnt =
-            NonNull::new(&*self.inserted_pend_cnt as *const _ as *mut u32).unwrap();
+        let pendcnt = this.pend_cnt.clone();
+        let inserted_pendcnt = this.inserted_pend_cnt.clone();
 
+        let cur_pend_cnt = pendcnt.load(Ordering::Acquire);
         if let Some(pend_period) = pend_period {
-            unsafe {
-                if (*pendcnt.as_ref() + 1) % pend_period == 0 {
-                    // println!("pending");
-                    *pendcnt.as_mut() += 1;
-                    *inserted_pendcnt.as_mut() += 1;
-
-                    // Register the current task to be woken when the pending period is reached.
-                    let waker = cx.waker().clone();
-                    waker.wake();
-
-                    return Poll::Pending;
-                }
+            if (cur_pend_cnt + 1) % pend_period == 0 {
+                // println!("pending");
+                pendcnt.fetch_add(1, Ordering::Release);
+                inserted_pendcnt.fetch_add(1, Ordering::Release);
+                // Register the current task to be woken when the pending period is reached.
+                let waker = cx.waker().clone();
+                waker.wake();
+                return Poll::Pending;
             }
         }
 
-        let inner_future = unsafe { self.map_unchecked_mut(|v| &mut v.future) };
-
-        match inner_future.poll(cx) {
+        match this.future.poll(cx) {
             Poll::Ready(r) => Poll::Ready(r),
             Poll::Pending => {
-                unsafe {
-                    // println!("pending");
-                    *pendcnt.as_mut() += 1;
-                }
+                // println!("pending");
+                pendcnt.fetch_add(1, Ordering::Release);
                 Poll::Pending
             }
         }
@@ -102,17 +95,10 @@ where
 
 #[cfg(test)]
 mod tests {
-
-    use std::{
-        collections::HashMap,
-        future,
-        sync::{Arc, Mutex},
-    };
-
     use super::PendingFuture;
     use crate::priority::Priority;
-    use crate::test_effect;
-    use crate::test_pend_cnt;
+    use crate::{test_effect, test_pend_cnt};
+    use std::sync::atomic::Ordering;
 
     async fn hello1() {
         println!("hello1");
@@ -137,7 +123,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_multi_await_no_pend() {
-        let future = PendingFuture::new(crate::priority::Priority::Middle, async {
+        let future = PendingFuture::new(Priority::Middle, async {
             // on stack future
             hello1().await;
             hello2().await;
@@ -156,7 +142,7 @@ mod tests {
         })
         .await
         .unwrap();
-        assert!(*pend_cnt == 0);
+        assert_eq!(0, pend_cnt.load(Ordering::Acquire));
     }
 
     #[tokio::test]
