@@ -1,0 +1,78 @@
+use futures::FutureExt;
+use ratelimit::Ratelimiter;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::{Context, Poll};
+use tokio::time::Sleep;
+
+use crate::priority::Priority;
+
+use super::runtime_handle::RateLimiterRuntimeHandle;
+
+enum State {
+    Pending,
+    Acquired,
+    Backoff(Pin<Box<Sleep>>),
+}
+
+#[pin_project::pin_project]
+pub struct PendingFuture<T> {
+    #[pin]
+    inner: T,
+    state: State,
+    handle: RateLimiterRuntimeHandle,
+}
+
+impl<T> PendingFuture<T> {
+    pub(crate) fn new(handle: RateLimiterRuntimeHandle, f: T) -> Self {
+        Self {
+            inner: f,
+            state: State::Pending,
+            handle,
+        }
+    }
+}
+
+impl<T, O> Future for PendingFuture<T>
+where
+    T: Future<Output = O>,
+{
+    type Output = O;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let mut this = self.project();
+
+        let Some(ratelimiter) = &this.handle.0 else {
+            return this.inner.poll(cx);
+        };
+
+        match this.state {
+            State::Pending => {
+                let next_state = if let Err(d) = ratelimiter.try_wait() {
+                    State::Backoff(Box::pin(tokio::time::sleep(d)))
+                } else {
+                    State::Acquired
+                };
+                *this.state = next_state;
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            }
+            State::Acquired => match this.inner.poll(cx) {
+                Poll::Ready(result) => Poll::Ready(result),
+                Poll::Pending => {
+                    *this.state = State::Pending;
+                    Poll::Pending
+                }
+            },
+            State::Backoff(sleep) => match sleep.as_mut().poll(cx) {
+                Poll::Ready(_) => {
+                    *this.state = State::Pending;
+                    cx.waker().wake_by_ref();
+                    Poll::Pending
+                }
+                Poll::Pending => Poll::Pending,
+            },
+        }
+    }
+}

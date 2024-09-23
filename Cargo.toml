@@ -21,6 +21,10 @@ tokio-metrics = "0.3"
 tokio-metrics-collector = { git = "https://github.com/MichaelScofield/tokio-metrics-collector.git", rev = "89d692d5753d28564a7aac73c6ac5aba22243ba0" }
 tokio-util = { version = "0.7", features = ["io-util", "compat"] }
 tracing = "0.1.40"
+ratelimit = "0.9.1"
+futures = "0.3.30"
+parking_lot = "0.12.3"
+rand = "0.8.5"
 
 # common-error.workspace = true
 # common-macro.workspace = true

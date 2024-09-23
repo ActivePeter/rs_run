@@ -213,6 +213,8 @@ define_global_runtime_spawn!(hb);
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use tokio_test::assert_ok;
 
     use super::*;
